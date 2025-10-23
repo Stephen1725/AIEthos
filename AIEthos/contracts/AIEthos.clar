@@ -224,6 +224,61 @@
     )
 )
 
+;; Comprehensive score calculation and update function with multi-factor analysis
+;; This function aggregates all score submissions, applies AI confidence weighting,
+;; factors in verifier credibility, applies time decay, and updates the final score
+(define-public (calculate-and-update-reputation (user principal) (submission-ids (list 10 uint)))
+    (let
+        (
+            (user-data (unwrap! (map-get? user-scores user) ERR-USER-NOT-FOUND))
+            (current-score (get score user-data))
+            (last-update (get last-updated user-data))
+            (blocks-passed (- block-height last-update))
+        )
+        ;; Apply time decay first
+        (let
+            (
+                (decayed-score (apply-score-decay current-score blocks-passed))
+                (total-weighted-score u0)
+                (total-weight u0)
+            )
+            ;; Process each submission
+            (let
+                (
+                    (processed-result (fold process-submission-fold submission-ids 
+                        {score-sum: u0, weight-sum: u0, user: user}))
+                    (final-score-sum (get score-sum processed-result))
+                    (final-weight-sum (get weight-sum processed-result))
+                )
+                ;; Calculate new average score
+                (let
+                    (
+                        (new-calculated-score 
+                            (if (> final-weight-sum u0)
+                                (/ final-score-sum final-weight-sum)
+                                decayed-score
+                            )
+                        )
+                        ;; Blend with existing score (70% new, 30% historical)
+                        (blended-score (/ (+ (* new-calculated-score u70) (* decayed-score u30)) u100))
+                        (final-score (if (> blended-score MAX-SCORE) MAX-SCORE blended-score))
+                    )
+                    ;; Update user score with new calculation
+                    (map-set user-scores user {
+                        score: final-score,
+                        total-interactions: (+ (get total-interactions user-data) (len submission-ids)),
+                        last-updated: block-height,
+                        status: (if (>= final-score u70) "excellent" 
+                                (if (>= final-score u50) "good" 
+                                (if (>= final-score u30) "fair" "poor")))
+                    })
+                    (ok final-score)
+                )
+            )
+        )
+    )
+)
+
 ;; Helper function for fold operation in score calculation
 (define-private (process-submission-fold (submission-id uint) (accumulator {score-sum: uint, weight-sum: uint, user: principal}))
     (let
